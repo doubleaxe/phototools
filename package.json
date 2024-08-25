@@ -1,0 +1,39 @@
+{
+  "name": "phototools",
+  "version": "1.0.0",
+  "description": "",
+  "keywords": [],
+  "author": "Alexey Usov (dax@xdax.ru, https://github.com/doubleaxe)",
+  "license": "MIT",
+  "packageManager": "pnpm@8.10.5",
+  "engines": {
+    "node": ">=18",
+    "pnpm": ">=8"
+  },
+  "type": "module",
+  "scripts": {
+    "lint": "eslint . --ext ts --report-unused-disable-directives --max-warnings 0"
+  },
+  "devDependencies": {
+    "@doubleaxe/eslint-config": "^1.0.2",
+    "@doubleaxe/prettier-config": "^1.0.2",
+    "@doubleaxe/typescript-config": "^1.0.2",
+    "@types/luxon": "^3.4.2",
+    "@types/node": "^18.19.33",
+    "@types/yargs": "^17.0.33",
+    "eslint": "^8.57.0",
+    "eslint-import-resolver-typescript": "^3.6.1",
+    "prettier": "^3.2.5",
+    "ts-node": "^10.9.2",
+    "tsconfig-paths": "^4.2.0",
+    "typescript": "^5.4.5",
+    "typescript-eslint": "^7.11.0"
+  },
+  "dependencies": {
+    "exifreader": "^4.23.3",
+    "exiftool-vendored": "^28.2.1",
+    "luxon": "^3.5.0",
+    "tslib": "^2.6.3",
+    "yargs": "^17.7.2"
+  }
+}
