@@ -6,8 +6,9 @@ import { DateTime, Settings } from 'luxon';
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
 
-// ts-node datetools.ts --dryrun -- 20120804
-// node --loader ts-node/esm --inspect-brk datetools.ts --dryrun -- 20120804
+// ts-node datetool.ts --dryrun --
+// node --loader ts-node/esm --inspect-brk datetool.ts --dryrun --
+// node --loader ts-node/esm --inspect-brk datetool.ts --source exif path mtime --target mtime --sourcepattern "([0-9_]+).*/(?:[A-Za-z]+[_-])?([0-9]+)[_-]([0-9]+)(\\..*)" --sourcepath '$1/$1_$2=yyyy_MM_dd/yyyyMMdd_HHmmss' --targetpath "yyyy/yyyyMM/yyyyMMdd_HHmmss'\$3'" --out ../photo-sorted --dryrun --
 const args = yargs(hideBin(process.argv))
     .option('source', {
         array: true,
@@ -21,21 +22,29 @@ const args = yargs(hideBin(process.argv))
         requiresArg: true,
         default: ['mtime'],
     })
+    .option('sourcepattern', {
+        string: true,
+        requiresArg: true,
+        default: '([0-9]+).*/.*',
+        // ([0-9_]+).*/(?:[A-Za-z]+[_-])?([0-9]+)[_-]([0-9]+)(\..*)
+    })
     .option('sourcepath', {
         string: true,
         requiresArg: true,
-        default: 'yyyyMMdd/[.*]',
+        default: '$1/=yyyyMMdd/',
+        // $1/$1_$2=yyyy_MM_dd/yyyyMMdd_HHmmss
     })
     .option('targetpath', {
         string: true,
         requiresArg: true,
-        default: 'yyyy/yyyyMMdd/[$1]',
+        default: "yyyy/yyyyMMdd/'$&'",
+        // yyyy/yyyyMM/yyyyMMdd_HHmmss'\$3'
     })
     .option('ext', {
         array: true,
         string: true,
         requiresArg: true,
-        default: ['.jpg', '.mts', '.avi', '.mp4'],
+        default: ['.jpg', '.png', '.mts', '.avi', '.mp4'],
     })
     .option('out', {
         string: true,
@@ -48,11 +57,18 @@ const args = yargs(hideBin(process.argv))
     .parseSync();
 
 (async () => {
-    const processor = useProcessor(args);
     try {
         const files = args._;
         for (const file of files) {
-            await processFile(path.resolve(String(file)), processor);
+            const dirOrFile = path.resolve(String(file));
+            const stat = fs.statSync(dirOrFile);
+            if (stat.isDirectory()) {
+                const processor = useProcessor(args, dirOrFile);
+                await processDir(dirOrFile, processor);
+            } else {
+                const processor = useProcessor(args, path.dirname(dirOrFile));
+                await processor.process(dirOrFile, undefined, stat, new Map());
+            }
         }
     } finally {
         await exiftool.end();
@@ -103,51 +119,41 @@ async function processDir(dir: string, processor: Processor) {
     }
 }
 
-async function processFile(dirOrFile: string, processor: Processor) {
-    const stat = fs.statSync(dirOrFile);
-    if (stat.isDirectory()) {
-        await processDir(dirOrFile, processor);
-    } else {
-        await processor.process(dirOrFile, undefined, stat, new Map());
-    }
-}
-
-function useProcessor(_args: Partial<typeof args>) {
+function useProcessor(_args: Partial<typeof args>, baseDir: string) {
     const outDir = path.resolve(args.out);
     const dryrun = _args.dryrun ?? false;
 
-    const sourcePatterns = _args.sourcepath?.split('/') ?? [];
-    const sourceRegex = sourcePatterns.map((p) => {
-        const regex = /(.*)\[(.*)\]/g;
-        let result = '';
-        for (;;) {
-            const m = regex.exec(p);
-            if (!m) break;
-            result += [...(m[1] ?? '')].map(() => '.').join('') + '(' + m[2] + ')';
-        }
-        if (!result) return undefined;
-        result = '^' + result + '$';
-        return new RegExp(result);
-    });
+    const sourceRegex = (_args.sourcepattern?.split('/') ?? []).map((p) => (p ? new RegExp('^' + p + '$') : undefined));
+    const index0 = _args.sourcepath?.lastIndexOf('=') ?? -1;
+    const sourceSubst = (index0 > 0 ? _args.sourcepath?.substring(0, index0) : undefined)?.split('/') ?? [];
+    const sourcePatterns = _args.sourcepath?.substring(index0 + 1).split('/') ?? [];
     const targetPatterns = _args.targetpath?.split('/') ?? [];
 
     const extensions = new Set(_args.ext ?? []);
     const targets = new Set(_args.target ?? []);
     const mkdirs = new Set<string>();
 
-    const defaultJsTime = new Date(1000, 0, 1, 0, 0, 0, 0);
+    const defaultJsTime = new Date(2000, 0, 1, 0, 0, 0, 0);
     Settings.now = () => defaultJsTime.getTime();
     const defaultTime = DateTime.fromJSDate(defaultJsTime);
 
-    function guessTimeFromPath(file: string, exifDateTime: DateTime | undefined, modifyDateTime: DateTime) {
+    function guessTimeFromPath(pathSegments: string[], exifDateTime: DateTime | undefined, modifyDateTime: DateTime) {
         let pathTime = defaultTime;
-        const pathSegments = file.split(path.sep);
-        const pathSubgroups: (string[] | null)[] = [];
+        const _pathSegments = [...pathSegments];
+        const _sourceRegex = [...sourceRegex];
+        const _sourceSubst = [...sourceSubst];
+        const _sourcePatterns = [...sourcePatterns];
+        for (;;) {
+            const segment = _pathSegments.pop();
+            if (segment === undefined) break;
+            const pattern = _sourcePatterns.pop();
+            if (pattern === undefined) break;
 
-        for (let i = sourcePatterns.length - 1; i >= 0; i--) {
-            const segment = pathSegments.pop();
-            if (!segment) break;
-            const date = DateTime.fromFormat(segment, sourcePatterns[i] ?? '');
+            const regex = _sourceRegex.pop();
+            const subst = _sourceSubst.pop();
+            if (!pattern) continue;
+            const subgroup = regex ? segment.replace(regex, subst ?? '') : segment;
+            const date = DateTime.fromFormat(subgroup, pattern);
             if (date.isValid) {
                 // eslint-disable-next-line @typescript-eslint/no-loop-func
                 (['year', 'month', 'day', 'hour', 'minute', 'second', 'millisecond'] as const).forEach((f) => {
@@ -156,8 +162,6 @@ function useProcessor(_args: Partial<typeof args>) {
                     if (v !== d) pathTime = pathTime.set({ [f]: v });
                 });
             }
-            const regex = sourceRegex[i];
-            pathSubgroups.unshift(regex ? segment.match(regex) : null);
         }
         let pathDateTime = pathTime.toMillis() !== defaultTime.toMillis() ? pathTime : undefined;
         if (
@@ -177,16 +181,15 @@ function useProcessor(_args: Partial<typeof args>) {
         }
         return {
             pathDateTime,
-            pathSubgroups,
         };
     }
 
-    async function guessTime(file: string, stat: fs.Stats, sidecars: Map<string, string>) {
+    async function guessTime(file: string, pathSegments: string[], stat: fs.Stats, sidecars: Map<string, string>) {
         const thmFile = sidecars.get('.thm');
         const exifFile = thmFile ?? file;
 
         const exifTags = await exiftool.read(exifFile);
-        const exifTime = exifTags.CreateDate ?? exifTags.DateTimeOriginal ?? exifTags.ModifyDate;
+        const exifTime = exifTags.DateTimeOriginal ?? exifTags.ModifyDate ?? exifTags.CreateDate;
         let exifDateTime: DateTime | undefined;
         if (exifTime && typeof exifTime === 'string') {
             exifDateTime = ExifDateTime.fromEXIF(exifTime)?.toDateTime();
@@ -194,7 +197,7 @@ function useProcessor(_args: Partial<typeof args>) {
             exifDateTime = exifTime?.toDateTime();
         }
         const modifyDateTime = DateTime.fromJSDate(stat.mtime);
-        const { pathDateTime, pathSubgroups } = guessTimeFromPath(file, exifDateTime, modifyDateTime);
+        const { pathDateTime } = guessTimeFromPath(pathSegments, exifDateTime, modifyDateTime);
 
         const timeSources: Record<string, DateTime | undefined> = {
             exif: exifDateTime,
@@ -206,27 +209,23 @@ function useProcessor(_args: Partial<typeof args>) {
             exifFile,
             exifTags,
             dateTime,
-            pathSubgroups,
         };
     }
 
-    function buildTargetPath(dateTime: DateTime, pathSubgroups: (string[] | null)[]) {
-        const _pathSubgroups = [...pathSubgroups];
+    function buildTargetPath(pathSegments: string[], dateTime: DateTime) {
+        const _pathSegments = [...pathSegments];
+        const _sourceRegex = [...sourceRegex];
+        const _targetPatterns = [...targetPatterns];
         const targetPaths = [];
-        for (let i = targetPatterns.length - 1; i >= 0; i--) {
-            const dateTimeFormat = dateTime.toFormat(targetPatterns[i] ?? '');
-            const pathSubgroup = _pathSubgroups.pop() ?? null;
-            const regex = /(.*)\[\$(\d+)\]/g;
-            let resultPath = '';
-            for (;;) {
-                const lastIndex = regex.lastIndex;
-                const m = regex.exec(dateTimeFormat);
-                if (!m) {
-                    resultPath += dateTimeFormat.substring(lastIndex);
-                    break;
-                }
-                resultPath += (m[1] ?? '') + (pathSubgroup?.[Number(m[2])] ?? '');
-            }
+        for (;;) {
+            const segment = _pathSegments.pop();
+            if (segment === undefined) break;
+            const pattern = _targetPatterns.pop();
+            if (pattern === undefined) break;
+
+            const regex = _sourceRegex.pop();
+            let resultPath = regex ? segment.replace(regex, pattern) : pattern || segment;
+            resultPath = dateTime.toFormat(resultPath);
             targetPaths.unshift(resultPath);
         }
         return path.join(outDir, ...targetPaths);
@@ -239,20 +238,25 @@ function useProcessor(_args: Partial<typeof args>) {
             return;
         }
 
-        const { exifFile, dateTime, pathSubgroups } = await guessTime(file, stat, sidecars);
+        const pathSegments = file.split(path.sep);
+        const { exifFile, dateTime } = await guessTime(file, pathSegments, stat, sidecars);
         if (!dateTime) {
             console.log(`No time for ${file}`);
             return;
         }
 
-        const targetPath = buildTargetPath(dateTime, pathSubgroups);
+        const targetPath = buildTargetPath(pathSegments, dateTime);
         const dir = path.dirname(targetPath);
-        if (!mkdirs.has(dir)) {
+        if (!dryrun && !mkdirs.has(dir)) {
             fs.mkdirSync(dir, { recursive: true });
             mkdirs.add(dir);
         }
-        console.log(`${file} -> ${targetPath} (${dateTime.toISO()})`);
+        console.log(`${path.relative(baseDir, file)} -> ${path.relative(outDir, targetPath)} (${dateTime.toISO()})`);
         if (!dryrun) {
+            if (fs.existsSync(targetPath)) {
+                console.log(`Exists ${targetPath}`);
+                return;
+            }
             fs.copyFileSync(file, targetPath);
         }
 
@@ -262,7 +266,9 @@ function useProcessor(_args: Partial<typeof args>) {
             const ext = path.extname(targetPath);
             const base = path.basename(targetPath, ext);
             exifTargetPath = path.join(dir, base + exifExt);
-            console.log(`${exifFile} -> ${exifTargetPath} (${dateTime.toISO()})`);
+            console.log(
+                `${path.relative(baseDir, exifFile)} -> ${path.relative(outDir, exifTargetPath)} (${dateTime.toISO()})`
+            );
             if (!dryrun) {
                 fs.copyFileSync(exifFile, exifTargetPath);
             }
@@ -282,10 +288,11 @@ function useProcessor(_args: Partial<typeof args>) {
         }
 
         // after exif
-        if (!dryrun && targets.has('mtime')) {
-            fs.utimesSync(targetPath, stat.atime, dateTime.toJSDate());
+        if (!dryrun) {
+            const mtime = targets.has('mtime') ? dateTime.toJSDate() : stat.mtime;
+            fs.utimesSync(targetPath, stat.atime, mtime);
             if (exifTargetPath) {
-                fs.utimesSync(exifTargetPath, stat.atime, dateTime.toJSDate());
+                fs.utimesSync(exifTargetPath, stat.atime, mtime);
             }
         }
     }

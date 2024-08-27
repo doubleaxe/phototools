@@ -5,9 +5,6 @@ settings:
   excludeLinksFromLockfile: false
 
 dependencies:
-  '@types/luxon':
-    specifier: ^3.4.2
-    version: 3.4.2
   exifreader:
     specifier: ^4.23.3
     version: 4.23.3
@@ -34,6 +31,9 @@ devDependencies:
   '@doubleaxe/typescript-config':
     specifier: ^1.0.2
     version: 1.0.2
+  '@types/luxon':
+    specifier: ^3.4.2
+    version: 3.4.2
   '@types/node':
     specifier: ^18.19.33
     version: 18.19.45
@@ -244,7 +244,6 @@ packages:
 
   /@types/luxon@3.4.2:
     resolution: {integrity: sha512-TifLZlFudklWlMBfhubvgqTXRzLDI5pCbGa4P8a3wPyUQSW+1xQ5eDsreP9DWHX3tjq1ke96uYG/nwundroWcA==}
-    dev: false
 
   /@types/node@18.19.45:
     resolution: {integrity: sha512-VZxPKNNhjKmaC1SUYowuXSRSMGyQGmQjvvA1xE4QZ0xce2kLtEhPDS+kqpCPBZYgqblCLQ2DAjSzmgCM5auvhA==}
