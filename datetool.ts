@@ -8,8 +8,9 @@ import { hideBin } from 'yargs/helpers';
 
 // ts-node datetool.ts --dryrun --
 // node --loader ts-node/esm --inspect-brk datetool.ts --dryrun --
-// node --loader ts-node/esm --inspect-brk datetool.ts --source exif path mtime --target mtime --sourcepattern "([0-9_]+).*/(?:[A-Za-z]+[_-])?([0-9]+)[_-]([0-9]+)(\\..*)" --sourcepath '$1/$1_$2=yyyy_MM_dd/yyyyMMdd_HHmmss' --targetpath "yyyy/yyyyMM/yyyyMMdd_HHmmss'\$3'" --out ../photo-sorted --dryrun --
+// node --loader ts-node/esm --inspect-brk datetool.ts --source exif path mtime --target mtime --sourcepattern "([0-9_]+).*/(?:[A-Za-z]+[_-])?(?:([0-9]+)[_-]([0-9]+))?.*(\\..*)" --sourcepath '$1/$1_$2=yyyy_MM_dd/yyyyMMdd_HHmmss' --targetpath "yyyy/yyyyMM/yyyyMMdd_HHmmss'\$3'" --out ../photo-sorted --dryrun --
 const args = yargs(hideBin(process.argv))
+    .strict()
     .option('source', {
         array: true,
         string: true,
@@ -26,7 +27,7 @@ const args = yargs(hideBin(process.argv))
         string: true,
         requiresArg: true,
         default: '([0-9]+).*/.*',
-        // ([0-9_]+).*/(?:[A-Za-z]+[_-])?([0-9]+)[_-]([0-9]+)(\..*)
+        // ([0-9_]+).*/(?:[A-Za-z]+[_-])?(?:([0-9]+)[_-]([0-9]+))?.*(\..*)
     })
     .option('sourcepath', {
         string: true,
@@ -44,7 +45,7 @@ const args = yargs(hideBin(process.argv))
         array: true,
         string: true,
         requiresArg: true,
-        default: ['.jpg', '.png', '.mts', '.avi', '.mp4'],
+        default: ['.jpg', '.png', '.mts', '.avi', '.mp4', '.3gp'],
     })
     .option('out', {
         string: true,
@@ -52,6 +53,9 @@ const args = yargs(hideBin(process.argv))
         default: 'out',
     })
     .option('dryrun', {
+        boolean: true,
+    })
+    .option('dedupe', {
         boolean: true,
     })
     .parseSync();
@@ -152,6 +156,7 @@ function useProcessor(_args: Partial<typeof args>, baseDir: string) {
             const regex = _sourceRegex.pop();
             const subst = _sourceSubst.pop();
             if (!pattern) continue;
+            if (regex && !regex.test(segment)) continue;
             const subgroup = regex ? segment.replace(regex, subst ?? '') : segment;
             const date = DateTime.fromFormat(subgroup, pattern);
             if (date.isValid) {
@@ -224,11 +229,27 @@ function useProcessor(_args: Partial<typeof args>, baseDir: string) {
             if (pattern === undefined) break;
 
             const regex = _sourceRegex.pop();
-            let resultPath = regex ? segment.replace(regex, pattern) : pattern || segment;
+            let resultPath = regex?.test(segment) ? segment.replace(regex, pattern) : pattern || segment;
             resultPath = dateTime.toFormat(resultPath);
             targetPaths.unshift(resultPath);
         }
         return path.join(outDir, ...targetPaths);
+    }
+
+    function dedupeFile(targetPath: string) {
+        if (!args.dedupe || !fs.existsSync(targetPath)) {
+            return targetPath;
+        }
+        const dir = path.dirname(targetPath);
+        const ext = path.extname(targetPath);
+        const base = path.basename(targetPath, ext);
+        for (let i = 1; i < 100000; i++) {
+            const _targetPath = path.join(dir, `${base}-${i}${ext}`);
+            if (!fs.existsSync(_targetPath)) {
+                return _targetPath;
+            }
+        }
+        return targetPath;
     }
 
     async function process(file: string, ext: string | undefined, stat: fs.Stats, sidecars: Map<string, string>) {
@@ -245,7 +266,7 @@ function useProcessor(_args: Partial<typeof args>, baseDir: string) {
             return;
         }
 
-        const targetPath = buildTargetPath(pathSegments, dateTime);
+        const targetPath = dedupeFile(buildTargetPath(pathSegments, dateTime));
         const dir = path.dirname(targetPath);
         if (!dryrun && !mkdirs.has(dir)) {
             fs.mkdirSync(dir, { recursive: true });
